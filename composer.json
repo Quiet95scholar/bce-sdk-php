@@ -1,5 +1,5 @@
 {
-  "name": "baidubce/bce-sdk-php",
+  "name": "linshuboy/bce-sdk-php",
   "homepage": "http://bce.baidu.com/sdkforphp",
   "description": "BCE SDK for PHP",
   "keywords": [
@@ -16,7 +16,7 @@
     }
   ],
   "support": {
-    "issues": "https://github.com/baidubce/bce-sdk-php/issues"
+    "issues": "https://github.com/Quiet95scholar/bce-sdk-php/issues"
   },
   "require": {
     "php": ">=5.3.3",

@@ -22,11 +22,26 @@ $BOS_TEST_CONFIG =
         'credentials' => array(
             'accessKeyId' => 'your ak',
             'secretAccessKey' => 'your sk',
+
             'sessionToken' => 'your session token'
         ),
         'endpoint' => 'host',
         'stsEndpoint' => 'sts host',
     );
+
+$CUSTOM_BOS_TEST_CONFIG =
+    array(
+        'credentials' => array(
+            'accessKeyId' => 'your ak',
+            'secretAccessKey' => 'your sk',
+
+            'sessionToken' => 'your session token'
+        ),
+        'endpoint' => 'customized host',
+        'custom' => true,
+        'stsEndpoint' => 'sts host',
+    );
+
 $STDERR = fopen('php://stderr', 'w+');
 $__handler = new \Monolog\Handler\StreamHandler($STDERR, \Monolog\Logger::DEBUG);
 $__handler->setFormatter(

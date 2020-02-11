@@ -33,6 +33,10 @@ class BosClientTest extends PHPUnit_Framework_TestCase
 {
     private $client;
     private $bucket;
+
+    private $custom_client;
+    private $custom_bucket;
+
     private $key;
     private $filename;
     private $download;
@@ -40,9 +44,11 @@ class BosClientTest extends PHPUnit_Framework_TestCase
     public function __construct()
     {
         global $BOS_TEST_CONFIG;
+        global $CUSTOM_BOS_TEST_CONFIG;
 
         parent::__construct();
         $this->client = new BosClient($BOS_TEST_CONFIG);
+        $this->custom_client = new BosClient($CUSTOM_BOS_TEST_CONFIG);
         $this->logger = LogFactory::getLogger(get_class($this));
     }
 
@@ -95,7 +101,8 @@ class BosClientTest extends PHPUnit_Framework_TestCase
     //test of bucket create/doesExist/list/delete operations
     public function testBucketOperations()
     {
-        $bucketName = "test-bucket-operations";
+        $id = rand();
+        $bucketName = "test-bucket-operations".$id;
         //not created, should be false
         $exist = $this->client->doesBucketExist($bucketName);
         $this->assertFalse($exist);
@@ -174,6 +181,100 @@ class BosClientTest extends PHPUnit_Framework_TestCase
         $this->assertTrue($found);
     }
 
+    //test of object acl set/set canned/get
+    public function testObjectAclOperations()
+    {
+        //put string
+        $this->client->putObjectFromString($this->bucket, $this->key, 'test');
+
+        // set object acl private
+        $canned_acl = array("x-bce-acl" => "private");
+        $this->client->setObjectCannedAcl($this->bucket, $this->key, $canned_acl);
+
+        //there is no public-read-write
+        $result = $this->client->getObjectAcl($this->bucket, $this->key);
+        $found = false;
+        foreach ($result->accessControlList as $acl) {
+            if (strcmp($acl->grantee[0]->id, '*') == 0) {
+                $this->assertEquals($acl->permission[0], 'READ');
+                $this->assertEquals($acl->permission[1], 'WRITE');
+                $found = true;
+            }
+        }
+        $this->assertFalse($found);
+        //there is public-read
+        $canned_acl = array("x-bce-acl" => "public-read");
+        $this->client->setObjectCannedAcl($this->bucket, $this->key, $canned_acl);
+        $result = $this->client->getObjectAcl($this->bucket, $this->key);
+        $found = false;
+        foreach ($result->accessControlList as $acl) {
+            if (strcmp($acl->grantee[0]->id, '*') == 0) {
+                $this->assertEquals($acl->permission[0], 'READ');
+                $found = true;
+            }
+        }
+        $this->assertTrue($found);
+
+        //set object acl x-bce-grant-read
+        $canned_acl = array("x-bce-grant-read" => "id=\"6c47a952\",id=\"8c47a95\"");
+        $this->client->setObjectCannedAcl($this->bucket, $this->key, $canned_acl);
+        $result = $this->client->getObjectAcl($this->bucket, $this->key);
+        $found = 0;
+        $acl = $result->accessControlList[0];
+        if (strcmp($acl->grantee[0]->id, '6c47a952') == 0) {
+            $this->assertEquals($acl->permission[0], 'READ');
+            $found++;
+        }
+        if (strcmp($acl->grantee[1]->id, '8c47a95') == 0) {
+            $this->assertEquals($acl->permission[0], 'READ');
+            $found++;
+        }
+        $this->assertEquals($found, 2);
+        //set object acl x-bce-grant-full-control
+        $canned_acl = array("x-bce-grant-full-control" => "id=\"6c47a953\",id=\"8c47a96\"");
+        $this->client->setObjectCannedAcl($this->bucket, $this->key, $canned_acl);
+        $result = $this->client->getObjectAcl($this->bucket, $this->key);
+        $found = 0;
+        $acl = $result->accessControlList[0];
+        if (strcmp($acl->grantee[0]->id, '6c47a953') == 0) {
+            $this->assertEquals($acl->permission[0], 'FULL_CONTROL');
+            $found++;
+        }
+        if (strcmp($acl->grantee[1]->id, '8c47a96') == 0) {
+            $this->assertEquals($acl->permission[0], 'FULL_CONTROL');
+            $found++;
+        }
+        $this->assertEquals($found, 2);
+        //upload customized acl
+        $found = false;
+        $my_acl = array(
+            array(
+                'grantee' => array(
+                    array(
+                        'id' => '7f34788d02a64a9c98f85600567d98a7',
+                    ),
+                    array(
+                        'id' => 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    ),
+                ),
+                'permission' => array('FULL_CONTROL'),
+            ),
+        );
+        $this->client->setObjectAcl($this->bucket, $this->key, $my_acl);
+        $result = $this->client->getObjectAcl($this->bucket, $this->key);
+        foreach ($result->accessControlList as $acl) {
+            foreach ($acl->grantee as $grantee) {
+                if (strcmp($grantee->id, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') ==
+                    0
+                ) {
+                    $found = true;
+                    $this->assertEquals($acl->permission[0], 'FULL_CONTROL');
+                }
+            }
+        }
+        $this->assertTrue($found);
+    }
+
     //test of object operations basic:
     //List; listObjects
     //Delete: deleteObject
@@ -182,16 +283,27 @@ class BosClientTest extends PHPUnit_Framework_TestCase
     //Get: getObjectAsString/getObjectToFile
     public function testObjectBasicOperations()
     {
+        $this->objectBasicOperations($this->client, $this->bucket);
+    }
+
+    /**
+     * Operate object in bucket.
+     * @param BosClient $client The bos client.
+     * @param string $bucket The bucket name.
+     * @return null
+     */
+    public function objectBasicOperations($client, $bucket)
+    {
         //put string
-        $this->client->putObjectFromString($this->bucket, $this->key, 'test');
+        $client->putObjectFromString($bucket, $this->key, 'test');
 
         //put file
         file_put_contents($this->filename, "test of put object from string");
         $otherKey = $this->key."other";
-        $this->client->putObjectFromFile($this->bucket, $otherKey, $this->filename);
+        $client->putObjectFromFile($bucket, $otherKey, $this->filename);
 
         //list the objects and check
-        $response = $this->client->listObjects($this->bucket);
+        $response = $client->listObjects($bucket);
         $keyArr = array(
             $this->key => false,
             $otherKey => false,
@@ -208,10 +320,10 @@ class BosClientTest extends PHPUnit_Framework_TestCase
         $this->assertEquals(0, count($keyArr));
 
         //copy object
-        $response = $this->client->copyObject($this->bucket, $this->key, $this->bucket, "copy_of_test");
+        $response = $client->copyObject($bucket, $this->key, $bucket, "copy_of_test");
 
         //list the bucket and check
-        $response = $this->client->listObjects($this->bucket);
+        $response = $client->listObjects($bucket);
         $keyArr = array(
             $this->key => false,
             $otherKey => false,
@@ -229,10 +341,10 @@ class BosClientTest extends PHPUnit_Framework_TestCase
         $this->assertEquals(0, count($keyArr));
 
         //delete object
-        $this->client->deleteObject($this->bucket, "copy_of_test");
+        $client->deleteObject($bucket, "copy_of_test");
 
         //list the bucket and check
-        $response = $this->client->listObjects($this->bucket);
+        $response = $client->listObjects($bucket);
         $keyArr = array(
             $this->key => false,
             $otherKey => false,
@@ -251,12 +363,22 @@ class BosClientTest extends PHPUnit_Framework_TestCase
         $this->assertTrue(array_key_exists("copy_of_test", $keyArr));
 
         //get object as string
-        $result = $this->client->getObjectAsString($this->bucket, $otherKey);
+        $result = $client->getObjectAsString($bucket, $otherKey);
         $this->assertStringEqualsFile($this->filename, $result);
 
         //get object to file
-        $this->client->getObjectToFile($this->bucket, $this->key, $this->download);
+        $client->getObjectToFile($bucket, $this->key, $this->download);
         $this->assertStringEqualsFile($this->download, 'test');
+
+        // append object
+        file_put_contents($this->filename, "test of put append object");
+        $appendKey = $this->key."append";
+        $response = $client->appendObjectFromFile($bucket, $appendKey, $this->filename, 0);
+        $nextOffsetTmp = $response->metadata[BosOptions::NEXT_APPEND_OFFSET];
+        $appendStr = "appendStr";
+        $response = $client->appendObjectFromString($bucket, $appendKey, $appendStr, intval($nextOffsetTmp));
+        $nextOffset = $response->metadata[BosOptions::NEXT_APPEND_OFFSET];
+        $this->assertEquals($nextOffset, strlen($appendStr) + $nextOffsetTmp);
     }
 
     //test of object operations advanced:
@@ -391,6 +513,62 @@ class BosClientTest extends PHPUnit_Framework_TestCase
         $this->assertFileEquals($this->filename, $this->download);
     }
 
+    public function testMultiPartCopyOperations() {
+        //prepare file
+        $fileSize = 21 * 1024 * 1024;
+        $partSize = 5 * 1024 * 1024;
+        $this->prepareTemporaryFile($fileSize);
+
+        $this->client->putObjectFromFile($this->bucket, $this->key, $this->filename);
+
+        //multi-upload
+        $partNumber = 1;
+        $length = $partSize;
+        $bytesLeft = $fileSize;
+        $offSet = 0;
+        $partList = array();
+        $response = $this->client->initiateMultipartUpload($this->bucket, $this->key."_multi_copy");
+        $uploadId =$response->uploadId;
+        while ($bytesLeft > 0) {
+            $length = ($length > $bytesLeft) ? $bytesLeft : $length;
+            $options = array(
+                BosOptions::RANGE => array($offSet, $offSet + $length - 1)
+            );
+            $response = $this->client->uploadPartCopy($this->bucket,
+                $this->key,
+                $this->bucket,
+                $this->key."_multi_copy",
+                $uploadId,
+                $partNumber,
+                $options
+            );
+            array_push(
+                $partList,
+                array("partNumber"=>$partNumber, "eTag"=>$response->eTag)
+            );
+            $partNumber++;
+            $bytesLeft -= $length;
+            $offSet += $length;
+        }
+
+        //list parts with options
+        $options = array(
+            BosOptions::LIMIT=>5,
+        );
+        $response = $this->client->listParts($this->bucket, $this->key."_multi_copy", $uploadId, $options);
+        $this->assertEquals(5, count($response->parts));
+
+        //complete multi part upload
+        $this->client->completeMultipartUpload($this->bucket, $this->key."_multi_copy", $uploadId, $partList);
+
+        //compare content length with file size
+        $contentLength =  $this->client->getObjectMetadata($this->bucket, $this->key."_multi_copy")["contentLength"];
+        $this->assertEquals($contentLength, $fileSize);
+
+        $this->client->deleteObject($this->bucket, $this->key."_multi_copy");
+
+    }
+
     //test of multi-part operations
     public function testMultiPartAdvancedOperations() {
         //prepare file
@@ -467,6 +645,24 @@ class BosClientTest extends PHPUnit_Framework_TestCase
         }
     }
 
+    public function testPutSuperObjectFromFile() {
+        //prepare file
+        $fileSize = 101 * 1024 * 1024;
+        $partSize = 5 * 1024 * 1024;
+        $this->prepareTemporaryFile($fileSize);
+
+        $userMeta = array("private" => "private data");
+        $options = array(BosOptions::USER_METADATA => $userMeta);
+
+        $this->client->putSuperObjectFromFile($this->bucket, $this->key, $this->filename, $options);
+
+        //get user meta
+        $response = $this->client->getObjectMetadata($this->bucket, $this->key);
+        $this->assertTrue(array_key_exists('private', $response['userMetadata']));
+        $this->assertEquals('private data', $response['userMetadata']['private']);
+    }
+
+
     //test of misc functions:generatePreSignedUrl
     public function testMiscOperations() {
     //put an object
@@ -488,5 +684,205 @@ class BosClientTest extends PHPUnit_Framework_TestCase
     );
     $file = file_get_contents($url);
     $this->assertEquals('test string', $file);
+    }
+
+    // test of client config with custom endpoint
+    public function testCustomObjectBasicOperations()
+    {
+        // If want to test custom endpoint, comment markTestSkipped and modify endpoint of $CUSTOM_BOS_TEST_CONFIG to custom endpoint
+        $this->markTestSkipped(
+            'Skip custom endpoint Case'
+        );
+        // modify it to your bucket associated with custom endpoint
+        // for example, 'endpoint' => 'http://cus-bucket.bj.bcebos.com', custom_bucket = "cus-bucket"
+        $this->custom_bucket = "your bucket name";
+        $this->objectBasicOperations($this->custom_client, $this->custom_bucket);
+
+        $custom_response = $this->custom_client->listObjects($this->custom_bucket);
+        foreach ($custom_response->contents as $object) {
+            $this->custom_client->deleteObject($this->custom_bucket, $object->key);
+        }
+    }
+
+    // test of put/get/delete bucket replication and get bucket replication progress
+    public function testBucketReplicationOperation()
+    {
+        $this->markTestSkipped(
+              'Skip Replication Case'
+            );
+        $replication_rule = array(
+            'status' => 'enabled',
+            'replicateDeletes' => 'enabled',
+            'id' => 'sample'
+        );
+        $replication_rule['resource'][0] = $this->bj_bucket . "/*";
+        $replication_rule['destination']['bucket'] = $this->gz_bucket;
+        $replication_rule['replicateHistory']['bucket'] = $this->gz_bucket;
+        $this->bj_client->putBucketReplication($this->bj_bucket, $replication_rule);
+        sleep(2);
+        $this->bj_client->putObjectFromString($this->bj_bucket, "increment", "content");
+        sleep(60);
+
+        $response = $this->bj_client->getBucketReplicationProgress($this->bj_bucket);
+        $this->assertEquals($response->historyReplicationPercent, 100);
+
+        $response = $this->bj_client->getBucketReplication($this->bj_bucket);
+        $this->assertEquals($response->status, "enabled");
+
+        $response = $this->bj_client->deleteBucketReplication($this->bj_bucket);
+    }
+
+    //test of bucket put/get/delete lifecycle operations
+    public function testBucketLifecycleOperations() {
+        $lifecycle_rule = array(
+            array(
+                'id' => 'rule-id0',
+                'status' => 'enabled',
+                'resource' => array(
+                    $this->bucket.'/prefix/*',
+                ),
+                'condition' => array(
+                    'time' => array(
+                        'dateGreaterThan' => '2016-09-07T00:00:00Z',
+                    ),
+                ),
+                'action' => array(
+                    'name' => 'DeleteObject',
+                )         
+            ),
+            array(
+                'id' => 'rule-id1',
+                'status' => 'disabled',
+                'resource' => array(
+                    $this->bucket.'/prefix/*',
+                ),
+                'condition' => array(
+                    'time' => array(
+                        'dateGreaterThan' => '2016-09-07T00:00:00Z',
+                    ),
+                ),
+                'action' => array(
+                    'name' => 'Transition',
+                    'storageClass' => 'COLD',
+                ),      
+            ), 
+        );
+
+        $this->client->putBucketLifecycle($this->bucket, $lifecycle_rule);
+
+        $lifecycle_ret = $this->client->getBucketLifecycle($this->bucket);
+        $this->assertEquals(sizeof($lifecycle_ret->rule), 2);
+        $this->assertEquals($lifecycle_ret->rule[0]->status, 'enabled');
+        $this->assertEquals($lifecycle_ret->rule[1]->action->name, 'Transition');
+        $this->client->deleteBucketLifecycle($this->bucket);
+    }
+
+    //test of bucket put/get/delete logging operations
+    public function testBucketLoggingOperations() {
+        // prepare target bucket
+        $this->client->createBucket($this->bucket.'logging');
+        $logging = array(
+                'targetBucket' => $this->bucket.'logging',
+                'targetPrefix' => 'TargetPrefixName'
+        );
+
+        $this->client->putBucketLogging($this->bucket, $logging);
+
+        $logging_ret = $this->client->getBucketLogging($this->bucket);
+        $this->assertEquals($logging_ret->status, 'enabled');
+        $this->assertEquals($logging_ret->targetPrefix, 'TargetPrefixName');
+        $this->client->deleteBucketLogging($this->bucket);
+        $this->client->deleteBucket($this->bucket.'logging');
+    }
+
+    //test of bucket put/get/delete trash operations
+    public function testBucketTrashOperations() {
+        $this->client->putBucketTrash($this->bucket, '.trashDirName');
+        $trash_ret = $this->client->getBucketTrash($this->bucket);
+        $this->assertEquals($trash_ret->trashDir, '.trashDirName');
+        $this->client->deleteBucketTrash($this->bucket);
+    }
+
+    //test of bucket put/get/delete static website operations
+    public function testBucketStaticWebsiteOperations() {
+        $static_website = array(
+                'index' => 'index.html',
+                'notFound' => '404.html'
+        );
+
+        $this->client->putBucketStaticWebsite($this->bucket, $static_website);
+        $static_website_ret = $this->client->getBucketStaticWebsite($this->bucket);
+        $this->assertEquals($static_website_ret->index, 'index.html');
+        $this->assertEquals($static_website_ret->notFound, '404.html');
+        $this->client->deleteBucketStaticWebsite($this->bucket);
+    }
+
+    //test of bucket put/get/delete encryption operations
+    public function testBucketEncryptionOperations() {
+        $this->client->putBucketEncryption($this->bucket, 'AES256');
+        $encryption_ret = $this->client->getBucketEncryption($this->bucket);
+        $this->assertEquals($encryption_ret->encryptionAlgorithm, 'AES256');
+        $this->client->deleteBucketEncryption($this->bucket);
+    }
+
+    //test of bucket put/get/delete cors operations
+    public function testBucketCorsOperations() {
+        $cors_rule = array(
+            array(
+                'allowedOrigins' => array(
+                    'http://www.example.com',
+                    'www.example2.com'
+                ),
+                'allowedMethods' => array(
+                    'GET',
+                    'HEAD'
+                ),
+                'allowedHeaders' => array(
+                    'Authorization'
+                ),
+                'allowedExposeHeaders' => array(
+                    'user-custom-expose-header'
+                ),
+                'maxAgeSeconds' => 3600        
+            ),
+            array(
+                'allowedOrigins' => array(
+                    'http://www.example3.com'
+                ),
+                'allowedMethods' => array(
+                    'GET',
+                    'PUT'
+                ),
+                'allowedHeaders' => array(
+                    'x-bce-test'
+                ),
+                'allowedExposeHeaders' => array(
+                    'user-custom-expose-header'
+                ),
+                'maxAgeSeconds' => 3600        
+            )
+        );
+
+        $this->client->putBucketCors($this->bucket, $cors_rule);
+
+        $cors_ret = $this->client->getBucketCors($this->bucket);
+        $this->assertEquals(sizeof($cors_ret->corsConfiguration), 2);
+        $this->assertEquals($cors_ret->corsConfiguration[0]->maxAgeSeconds, 3600);
+        $this->assertEquals($cors_ret->corsConfiguration[1]->allowedOrigins[0], 'http://www.example3.com');
+        $this->client->deleteBucketCors($this->bucket);
+    }
+
+    //test of bucket put/get/delete copyright protection operations
+    public function testBucketCopyrightProtectionOperations() {
+        $copyright_protection = array(
+                $this->bucket.'/prefix/*',
+                $this->bucket.'/*/suffix'
+        );
+
+        $this->client->putBucketCopyrightProtection($this->bucket, $copyright_protection);
+        $copyright_protection_ret = $this->client->getBucketCopyrightProtection($this->bucket);
+        $this->assertEquals($copyright_protection_ret->resource[0], $this->bucket.'/prefix/*');
+        $this->assertEquals($copyright_protection_ret->resource[1], $this->bucket.'/*/suffix');
+        $this->client->deleteBucketCopyrightProtection($this->bucket);
     }
 }
